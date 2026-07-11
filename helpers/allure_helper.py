@@ -33,6 +33,17 @@ def attach_file(path: Path, name: str, attachment_type: str | None = None) -> No
     allure.attach.file(str(path), name=name, attachment_type=allure_type)
 
 
+def allure_step(title: str):
+    """Allure step 装饰器；未安装 allure 时保持原函数不变。"""
+    if allure is not None:
+        return allure.step(title)
+
+    def decorator(func):
+        return func
+
+    return decorator
+
+
 def attach_screenshot(adb: Any, artifact_dir: Path, name: str) -> Path:
     safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "screenshot"
     path = artifact_dir / f"{safe_name}.png"

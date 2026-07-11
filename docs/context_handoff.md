@@ -477,3 +477,78 @@ Compress-Archive -Path .\output\allure_report\* -DestinationPath .\output\allure
 - 离线报告包：`output/allure_report_with_screenshots.zip`。
 - 当前强覆盖停在 79/142；剩余 4 条不建议硬升：三个长按菜单无稳定产品响应，一个未登录账号态需要切换账号/清数据。
 
+### 2026-07-07 Allure Behaviors 报告结构优化
+
+本轮按“功能视图/BDD 风格业务行为分层”优化 Allure 报告展示，不改动设备操作和业务断言逻辑：
+
+- 新增 `helpers/allure_labels.py`：集中维护 40 条酷我用例的 `epic/feature/story/title/description/severity/tag`。
+- `tests/conftest.py` 新增 autouse fixture：按 pytest 节点名自动注入 Allure Behaviors 元数据。
+- `helpers/allure_helper.py` 新增 `allure_step()`：未安装 Allure 时保持原函数不变，安装 Allure 时生成步骤。
+- `pageobjects/kuwo/*` 常用动作和页面断言补充 Allure step，包括首页启动、tab 切换、搜索页加载、设置页加载、播放页控制、收藏/下载/账户页断言等。
+- README 已补充报告业务分层说明。
+
+报告结构目标：
+
+```text
+酷我音乐
+  环境 / 主页 / 搜索 / 播放页 / 播放列表 / 最近收听 / 设置 / 我的 / 下载 / 收藏 / 驾驶模式
+    子功能
+      中文用例标题
+```
+
+只读验证结果：
+
+- `python -m pytest --collect-only -q tests\kuwo`：40 tests collected。
+- Allure 元数据映射完整性检查：tests=40，meta=40，missing=[]，extra=[]。
+
+注意：本轮未连接台架、未执行自动化用例。需要重新生成报告后，Allure 左侧“功能/Behaviors”页才会看到新的中文业务树。
+
+### 2026-07-09 全量回归执行与报告
+
+本轮执行完整酷我回归并重新生成 Allure HTML 报告：
+
+- 历史默认台架 `192.168.2.197:5555` 本轮 ADB 连接超时，未在线；改用当前在线 MMI 设备 `192.168.2.89:5555` 执行，媒体包 `com.jidouauto.media`，版本 `CL54.26.225`。
+- 执行命令：`python .\main.py .\tests\kuwo -q -rs --clean-alluredir`，环境变量 `MEDIA_DEVICE_SERIAL=192.168.2.89:5555`、`MEDIA_PROFILE=oneinfo_kuwo`。
+- pytest 结果：40 total，25 passed，13 failed，2 xfailed，耗时 1952.53s（32m32s）。
+- Allure 生成命令：`allure generate .\output\allure_results -o .\output\allure_report --clean`，生成成功。
+- Allure 统计：40 total，25 passed，12 failed，1 broken，2 skipped；报告内 PNG 附件 104 张。
+- 离线报告包：`output/allure_report_with_screenshots.zip`，大小约 102.6 MB。
+
+本轮失败聚类：
+
+- 搜索页入口/标题栏搜索跳转类失败：多条用例均为 `搜索推荐列表未展示`，即 `KuwoSearchLocators.SEARCH_RECYCLER` 未出现；影响搜索主流程、歌手详情、最近收听/下载/收藏标题栏搜索入口。
+- 首页曲库分类失败：`test_kuwo_member_playlist_and_library_category_strong` 未找到“抖音”分类，可能与当前内容运营位/分类命名变化有关。
+- 最近收听/下载/收藏标题栏类失败：主要由标题栏搜索入口进入后的搜索推荐列表断言失败引发。
+- 收藏专辑详情失败：`uiautomator dump` 未产出 `/sdcard/media_auto_window.xml`，属于 XML dump 瞬时失败，被 Allure 归为 broken。
+
+本轮稳定性修复：
+
+- `tests/conftest.py` 的失败取证 hook 已做兜底：失败时截图、XML、设备上下文、logcat 分段采集；任一 ADB 取证失败只附加错误文本，不再反向触发 pytest INTERNALERROR。
+- 该修复用于处理网络 ADB 断连或设备短暂不可读时的报告完整性问题，不改变业务断言结果。
+
+### 2026-07-10 2.89 台架全量回归
+
+本轮在 `192.168.2.89:5555` 上再次执行当前 40 条酷我用例，媒体包版本为 `CL54.26.225`：
+
+- 独立结果目录：`output/run_192_168_2_89_20260710_174314`。
+- pytest 结果：23 passed，15 failed，2 xfailed；pytest 耗时 1841.88s（30m41.88s），命令墙钟耗时 1843.63s。
+- Allure 结果：23 passed，11 failed，4 broken，2 skipped；报告生成成功，包含 94 张 PNG 附件。
+- 分模块通过情况：驾驶模式 2/3、首页 6/9、播放与媒体库 7/9、搜索 0/6、设置 2/2、smoke 4/6、下载与收藏 2/5。
+
+失败聚类：
+
+- 10 条搜索相关失败均为搜索页显示“无搜索结果”，存在输入框但没有脚本预期的 `recyclerView`；属于同一个空态/前置数据假设，需专项适配。
+- 3 条首页用例因动态标题 `燃系欧美 | 健身达人高能BGM` 拼入 Windows XML 文件名触发 `OSError: [Errno 22]`。
+- 1 条收藏专辑详情用例因 `uiautomator dump` 连续未产出远端 XML 被 Allure 归为 broken。
+- 1 条驾驶模式用例点击“关于”后仍停留在设置页，属于点击或同步不稳定。
+- 2 条 xfailed 是播放页动态 XML 和播放列表长按无稳定菜单的已知限制。
+
+### 2026-07-11 提交前整理与验证
+
+- `BasePage.refresh()` 集中清洗 Windows 非法证据文件名字符并限制文件名长度，修复动态标题含 `|` 导致的 3 条框架错误。
+- Allure 元数据改为在插件完成 setup 初始化后注入，确保中文标题和 description 不再被测试函数名覆盖；同时去除与 pytest marker 重复的 tag。
+- `python -m pytest --collect-only -q tests\kuwo`：40 tests collected。
+- 文件名清洗断言通过；Python 全量模块编译通过。
+- `test_device_online`、`test_launch_kuwo_home` 在 `192.168.2.89:5555` 上定向验证：2 passed in 15.74s；结果 JSON 已确认中文标题、中文描述、首页步骤和 Behaviors 层级生效，tag 无重复。
+- 本轮整理后未重新执行 40 条设备全量回归，最新全量结果仍以上述 2026-07-10 数据为准。
+

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -9,6 +10,27 @@ from pathlib import Path
 from typing import Callable
 
 from helpers.adb_helper import ADBHelper
+
+
+_INVALID_ARTIFACT_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_MAX_ARTIFACT_FILENAME_LENGTH = 120
+_MAX_COMPATIBLE_ARTIFACT_PATH_LENGTH = 240
+
+
+def _safe_artifact_filename(name: str, max_length: int = _MAX_ARTIFACT_FILENAME_LENGTH) -> str:
+    """生成可跨 Windows 使用的单层证据文件名，并保留原扩展名。"""
+    sanitized = _INVALID_ARTIFACT_FILENAME_CHARS.sub("_", name).rstrip(" .")
+    if not sanitized:
+        return "current_window.xml"
+    needs_hash = sanitized != name or len(sanitized) > max_length
+    if not needs_hash:
+        return sanitized
+
+    path = Path(sanitized)
+    suffix = path.suffix
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:8]
+    stem_limit = max(1, max_length - len(suffix) - len(digest) - 1)
+    return f"{path.stem[:stem_limit]}_{digest}{suffix}"
 
 
 class BasePage:
@@ -20,7 +42,9 @@ class BasePage:
         self._root: ET.Element | None = None
 
     def refresh(self, name: str = "current_window.xml") -> ET.Element:
-        self._last_xml_path = self.artifact_dir / name
+        remaining_path_budget = _MAX_COMPATIBLE_ARTIFACT_PATH_LENGTH - len(str(self.artifact_dir.resolve())) - 1
+        filename_limit = max(32, min(_MAX_ARTIFACT_FILENAME_LENGTH, remaining_path_budget))
+        self._last_xml_path = self.artifact_dir / _safe_artifact_filename(name, filename_limit)
         self.adb.dump_ui_xml(self._last_xml_path)
         self._root = ET.parse(self._last_xml_path).getroot()
         return self._root

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from helpers.allure_helper import allure_step
 from pagelocators.kuwo_locators import KuwoHomeLocators, KuwoSearchLocators
 from pageobjects.base_page import BasePage
 
 
 class KuwoSearchPage(BasePage):
+    @allure_step("断言搜索页已加载")
     def assert_loaded(self) -> None:
         assert self.wait_for(lambda: self.exists_resource_id(KuwoSearchLocators.EDIT_TEXT)), "搜索输入框未展示"
         assert self.exists_resource_id(KuwoSearchLocators.SEARCH_RECYCLER), "搜索推荐列表未展示"
 
+    @allure_step("关闭搜索页")
     def close(self) -> None:
         self.refresh("before_close_search.xml")
         # 搜索页会拉起软键盘，优先点页面返回按钮，避免一次 Back 只收起键盘。
@@ -18,11 +21,13 @@ class KuwoSearchPage(BasePage):
         self.refresh(f"search_keyword_entry_{keyword}.xml")
         return self.exists_text(keyword)
 
+    @allure_step("点击已有搜索词：{keyword}")
     def search_by_existing_keyword(self, keyword: str) -> None:
         self.refresh(f"before_search_keyword_{keyword}.xml")
         # 中文输入在车机软键盘上不稳定，优先复用搜索页已有历史词/推荐词，避免引入输入法噪声。
         self.tap_text(keyword)
 
+    @allure_step("输入 ASCII 搜索词：{keyword}")
     def search_by_ascii_keyword(self, keyword: str) -> None:
         self.refresh(f"before_input_ascii_keyword_{keyword}.xml")
         self.tap_resource_id(KuwoSearchLocators.EDIT_TEXT)
@@ -30,6 +35,7 @@ class KuwoSearchPage(BasePage):
         self.adb.input_text(keyword)
         self.adb.press_enter()
 
+    @allure_step("断言搜索结果页已加载：{keyword}")
     def assert_result_loaded(self, keyword: str) -> None:
         def loaded() -> bool:
             edit = self.find_by_resource_id(KuwoSearchLocators.EDIT_TEXT)
@@ -44,9 +50,11 @@ class KuwoSearchPage(BasePage):
 
         assert self.wait_for(loaded), f"搜索结果页未稳定展示: {keyword}"
 
+    @allure_step("滑动到搜索结果歌手分组")
     def scroll_to_artist_section(self) -> None:
         self.adb.swipe(1000, 720, 1000, 350, 700)
 
+    @allure_step("断言搜索结果歌手分组已展示：{keyword}")
     def assert_artist_section_loaded(self, keyword: str) -> None:
         def loaded() -> bool:
             edit = self.find_by_resource_id(KuwoSearchLocators.EDIT_TEXT)
@@ -61,6 +69,7 @@ class KuwoSearchPage(BasePage):
 
         assert self.wait_for(loaded), f"搜索结果歌手分组未展示: {keyword}"
 
+    @allure_step("进入首个歌手详情")
     def open_first_artist_detail(self) -> None:
         self.refresh("before_open_first_artist_detail.xml")
         # 歌手名节点位于歌手结果行内，点击其 bounds 中心能进入歌手详情，不触发歌曲播放。
@@ -76,6 +85,7 @@ class KuwoSearchPage(BasePage):
                     titles.append(title)
         return titles
 
+    @allure_step("点击搜索结果歌曲索引：{index}")
     def tap_song_result_by_index(self, index: int) -> str:
         self.refresh(f"before_tap_song_result_{index}.xml")
         song_nodes = [
@@ -114,6 +124,7 @@ class KuwoSearchPage(BasePage):
                         return title
         raise AssertionError("搜索结果页未找到正在播放的歌曲行")
 
+    @allure_step("断言歌手详情页已加载：{artist_name}")
     def assert_artist_detail_loaded(self, artist_name: str) -> None:
         def loaded() -> bool:
             title = self.find_by_resource_id(KuwoSearchLocators.DETAIL_TITLE)
@@ -122,14 +133,18 @@ class KuwoSearchPage(BasePage):
 
         assert self.wait_for(loaded), f"歌手详情页未展示: {artist_name}"
 
+    @allure_step("关闭歌手详情页")
     def close_artist_detail(self) -> None:
         self.adb.press_back()
 
+    @allure_step("点击歌手详情页搜索入口")
     def tap_title_search(self) -> None:
         self.adb.tap(315, 178)
 
+    @allure_step("点击歌手详情页酷我 logo")
     def tap_title_logo(self) -> None:
         self.adb.tap(447, 178)
 
+    @allure_step("点击歌手详情页设置入口")
     def tap_title_settings(self) -> None:
         self.adb.tap(1855, 178)

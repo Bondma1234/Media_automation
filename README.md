@@ -74,10 +74,11 @@ VSCode 运行说明：
 当前用例规模：
 
 - `python -m pytest --collect-only -q tests\kuwo`：40 tests collected。
-- `python .\main.py .\tests\kuwo -q -rs --clean-alluredir`：38 passed，2 xfailed。
+- 最近一次全量回归（2026-07-10，设备 `192.168.2.89:5555`，版本 `CL54.26.225`）：40 total，23 passed，15 failed，2 xfailed，耗时 1841.88s（30m41.88s）。
 - 酷我 P1/P2 映射：142/142 已完成分类；按当前 VIP 登录账号前置，强自动化覆盖 79/142（55.6%），自动化证据覆盖 83/142（58.5%）。
-- Allure 报告目录：`output/allure_report`；离线报告包：`output/allure_report_with_screenshots.zip`。
-- Allure HTML 中包含 80 张 PNG 截图附件；Allure 报告统计为 38 passed、2 skipped（对应 pytest 的 2 条 xfailed）。
+- 本机最新 Allure 报告目录：`output/run_192_168_2_89_20260710_174314/allure_report`；默认报告仍可生成到 `output/allure_report`。
+- 本次 Allure HTML 中包含 94 张 PNG 附件；报告统计为 40 total，23 passed，11 failed，4 broken，2 skipped（对应 pytest 的 2 条 xfailed）。
+- 失败集中在搜索页“无搜索结果”空态（10 条）、动态标题生成 Windows 非法文件名（3 条）、收藏专辑 XML dump 瞬时失败（1 条）和设置关于页跳转失败（1 条）。其中非法文件名和 Allure 中文标题注入已在回归后修复，尚待下一轮全量复验。
 - `output/`、`.env`、`.pytest_cache/`、`__pycache__/` 为本地运行产物或个人配置，默认不提交到 Git。
 
 已覆盖的酷我自动化入口：
@@ -101,6 +102,21 @@ VSCode 运行说明：
 - 管理：已生成并更新酷我 P1/P2 用例映射 CSV/Markdown；当前 P1/P2 已完成 142/142 分类，自动化证据覆盖 83/142。
 
 ## 查看和分享 Allure 报告
+
+当前报告已按 Allure Behaviors 业务行为分层展示：
+
+```text
+酷我音乐
+  环境 / 主页 / 搜索 / 播放页 / 播放列表 / 最近收听 / 设置 / 我的 / 下载 / 收藏 / 驾驶模式
+    子功能
+      中文用例标题
+```
+
+实现方式：
+
+- `helpers/allure_labels.py` 集中维护 40 条酷我用例的 `epic/feature/story/title/description/severity/tag`。
+- `tests/conftest.py` 在 Allure 完成 setup 初始化后统一注入元数据，避免每个测试函数重复编写装饰器。
+- Page Object 常用动作和断言通过 `helpers/allure_helper.py::allure_step` 生成执行步骤。
 
 本机查看：
 

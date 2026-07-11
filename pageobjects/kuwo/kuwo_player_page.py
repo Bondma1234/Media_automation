@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 
+from helpers.allure_helper import allure_step
 from pagelocators.kuwo_locators import KuwoPlayerLocators
 from pageobjects.base_page import BasePage
 
@@ -10,6 +11,7 @@ class KuwoPlayerPage(BasePage):
     def is_foreground(self) -> bool:
         return "PlayPopupActivity" in self.adb.current_focus()
 
+    @allure_step("断言播放页在前台")
     def assert_foreground(self) -> None:
         assert self.is_foreground(), "播放页未进入前台"
 
@@ -19,6 +21,7 @@ class KuwoPlayerPage(BasePage):
         except Exception:
             return False
 
+    @allure_step("断言播放页标题已展示")
     def assert_title_loaded(self) -> None:
         assert self.title_loaded(), "播放页标题未展示"
 
@@ -31,39 +34,49 @@ class KuwoPlayerPage(BasePage):
         meaningful_texts = [text for text in self.texts() if text not in {"正在播放", "去K歌"}]
         return bool(meaningful_texts)
 
+    @allure_step("关闭播放页")
     def close(self) -> None:
         self.adb.press_back()
 
+    @allure_step("点击播放页返回按钮")
     def tap_title_back(self) -> None:
         self.adb.tap(185, 178)
 
+    @allure_step("点击播放页酷我 logo")
     def tap_title_logo(self) -> None:
         self.adb.tap(447, 178)
 
+    @allure_step("打开播放列表")
     def open_queue_by_coordinate(self) -> None:
         # 播放页的播放列表按钮当前没有稳定 resource-id，使用标题栏左侧固定区域兜底。
         self.adb.tap(315, 178)
 
+    @allure_step("点击播放列表可见歌曲")
     def tap_visible_queue_song_by_coordinate(self, y: int = 365) -> None:
         # 播放列表 XML 在动态歌词/播放动画下不可稳定读取，点击首个完整可见歌曲行中部切歌。
         self.adb.tap(510, y)
 
+    @allure_step("长按播放列表首行歌曲")
     def long_press_first_queue_song_by_coordinate(self) -> None:
         # 播放列表浮层 XML 经常不可读，使用首行歌曲标题区域坐标做长按观测。
         self.adb.long_press(350, 295, duration_ms=1600)
 
+    @allure_step("点击播放页播放暂停按钮")
     def tap_play_pause_by_coordinate(self) -> None:
         # 播放页底部播放/暂停按钮没有稳定 XML 标识，坐标命中底部控制条第二个按钮。
         self.adb.tap(512, 756)
 
+    @allure_step("点击播放页下载按钮")
     def tap_download_button_by_coordinate(self) -> None:
         # 播放页底部下载按钮目前没有稳定 XML 标识，坐标命中 VIP 下载图标区域。
         self.adb.tap(1530, 755)
 
+    @allure_step("点击播放页去 K 歌入口")
     def tap_k_song_by_coordinate(self) -> None:
         # “去K歌”是播放页标题栏右侧入口，当前仅做跳转校验，不触碰 K 歌内的登录/购买/授权动作。
         self.adb.tap(1670, 180)
 
+    @allure_step("拖动播放进度到末尾附近")
     def seek_near_end_by_coordinate(self) -> None:
         # 进度条没有稳定 resource-id；拖到末尾前一点后等待自然播完，用于验证播放完成/续播链路。
         self.adb.swipe(900, 598, 1785, 598, duration_ms=900)
@@ -82,6 +95,7 @@ class KuwoPlayerPage(BasePage):
             "com.jidouauto.media:id/recyclerView"
         )
 
+    @allure_step("断言播放列表已加载")
     def assert_queue_loaded(self) -> None:
         assert self.wait_for(lambda: self.exists_text(KuwoPlayerLocators.QUEUE_TITLE)), "播放列表标题未展示"
         assert self.exists_resource_id("com.jidouauto.media:id/recyclerView"), "播放列表未展示"

@@ -9,6 +9,7 @@ from config.media_profiles import MediaProfile, get_media_profile
 from config.settings import Settings, load_settings
 from drivers.u2_driver import U2Driver
 from helpers.adb_helper import ADBHelper
+from helpers.allure_labels import apply_allure_case_metadata
 from helpers.allure_helper import attach_file, attach_text
 
 
@@ -69,6 +70,13 @@ def artifact_dir(settings: Settings, request: pytest.FixtureRequest) -> Path:
     return path
 
 
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item):
+    # 等 Allure 自身完成 setup 元数据初始化后再覆盖标题和描述，避免中文信息被测试函数名回写。
+    yield
+    apply_allure_case_metadata(item.name, (marker.name for marker in item.iter_markers()))
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[object]):
     outcome = yield
@@ -88,13 +96,37 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[object]):
     context = artifact_dir / "device_context.txt"
     logcat = artifact_dir / "logcat_tail.txt"
 
-    adb.capture_screenshot(screenshot)
-    adb.dump_ui_xml(xml, strict=False)
     package = profile.package if isinstance(profile, MediaProfile) else None
-    context.write_text(adb.device_info(package), encoding="utf-8")
-    logcat.write_text(adb.logcat_tail(), encoding="utf-8")
+    evidence_errors: list[str] = []
 
-    attach_file(screenshot, "failure screenshot", "png")
-    attach_file(xml, "failure ui xml", "xml")
-    attach_text("device context", context.read_text(encoding="utf-8"))
-    attach_text("logcat tail", logcat.read_text(encoding="utf-8"))
+    # 失败取证不能反过来中断 pytest 主流程；网络 ADB 断连时保留错误文本即可。
+    try:
+        adb.capture_screenshot(screenshot)
+        attach_file(screenshot, "failure screenshot", "png")
+    except Exception as exc:
+        evidence_errors.append(f"screenshot: {exc}")
+
+    try:
+        adb.dump_ui_xml(xml, strict=False)
+        attach_file(xml, "failure ui xml", "xml")
+    except Exception as exc:
+        evidence_errors.append(f"ui xml: {exc}")
+
+    try:
+        context.write_text(adb.device_info(package), encoding="utf-8")
+        attach_text("device context", context.read_text(encoding="utf-8"))
+    except Exception as exc:
+        evidence_errors.append(f"device context: {exc}")
+
+    try:
+        logcat.write_text(adb.logcat_tail(), encoding="utf-8")
+        attach_text("logcat tail", logcat.read_text(encoding="utf-8"))
+    except Exception as exc:
+        evidence_errors.append(f"logcat: {exc}")
+
+    if evidence_errors:
+        try:
+            attach_text("failure evidence capture errors", "\n".join(evidence_errors))
+        except Exception:
+            # 即使 Allure 附件系统本身异常，也不能把原始测试失败升级成 pytest INTERNALERROR。
+            pass
