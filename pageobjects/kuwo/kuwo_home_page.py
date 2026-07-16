@@ -1,36 +1,198 @@
 from __future__ import annotations
 
+import time
+
 from config.media_profiles import MediaProfile
 from helpers.allure_helper import allure_step
-from pagelocators.kuwo_locators import KuwoAccountLocators, KuwoHomeLocators
+from pagelocators.kuwo_locators import (
+    KuwoAccountLocators,
+    KuwoHomeLocators,
+    KuwoPlayerLocators,
+    KuwoSearchLocators,
+    KuwoSettingsLocators,
+)
 from pageobjects.base_page import BasePage
 
 
 class KuwoHomePage(BasePage):
+    @staticmethod
+    def _tab_identity(tab_name: str) -> tuple[str, tuple[str, ...]]:
+        for canonical, aliases in KuwoHomeLocators.TAB_ALIASES.items():
+            if tab_name == canonical or tab_name in aliases:
+                return canonical, aliases
+        raise AssertionError(f"未登记的酷我首页 Tab: {tab_name}")
+
+    def _tab_node(self, tab_name: str):
+        _, aliases = self._tab_identity(tab_name)
+        for alias in aliases:
+            node = self.find_by_desc(f"content={alias}", exact=True)
+            if node is not None:
+                return node
+        return None
+
+    def _selected_home_tab(self):
+        for canonical in KuwoHomeLocators.TABS:
+            node = self._tab_node(canonical)
+            if node is not None and node.attrib.get("selected") == "true":
+                return node
+        return None
+
+    def _has_any_desc(self, aliases: tuple[str, ...]) -> bool:
+        return any(self.exists_desc(alias) for alias in aliases)
+
+    def _tap_desc_alias(self, aliases: tuple[str, ...], label: str) -> None:
+        for alias in aliases:
+            node = self.find_by_desc(alias)
+            if node is not None:
+                self.tap_node_center(node, label)
+                return
+        raise AssertionError(f"未找到可点击入口: {label}")
+
+    def _root_packages(self) -> set[str]:
+        return {
+            (node.attrib.get("package") or "").strip()
+            for node in self.nodes()
+            if (node.attrib.get("package") or "").strip()
+        }
+
+    def _is_initializing(self) -> bool:
+        return self.exists_resource_id(KuwoHomeLocators.INIT_PROGRESS)
+
+    def _is_known_child_page(self, profile: MediaProfile) -> bool:
+        """只识别有明确页面证据的酷我子页面，禁止在未知页面盲按 Back。"""
+        if profile.package not in self._root_packages():
+            return False
+        has_back = self._has_any_desc(KuwoHomeLocators.BACK_DESC_ALIASES)
+        known_ids = (
+            KuwoHomeLocators.DETAIL_TITLE,
+            KuwoSearchLocators.EDIT_TEXT,
+            KuwoPlayerLocators.ROOT,
+            KuwoAccountLocators.AVATAR,
+            KuwoSettingsLocators.OPEN_SOURCE_LIST,
+            KuwoSettingsLocators.OPEN_SOURCE_DRIVING_RESTRICTED,
+        )
+        return has_back or any(self.exists_resource_id(locator) for locator in known_ids)
+
+    def _observe_page_state(self, profile: MediaProfile, timeout: float) -> str:
+        """读取一次页面并返回可用于安全恢复的状态；读树失败绝不等价于子页面。"""
+        self._root = None
+        try:
+            self.refresh("home_recovery_state.xml", timeout=timeout)
+        except Exception:
+            self._root = None
+            return "unreadable"
+        if self.is_loaded():
+            return "home"
+        if self._is_initializing():
+            return "loading"
+        if self._is_known_child_page(profile):
+            return "known_child"
+        if profile.package in self._root_packages():
+            return "unknown_media"
+        return "other_app"
+
+    def _wait_for_navigation_state(self, profile: MediaProfile, timeout: float) -> str:
+        """在一个墙钟预算内等待启动/返回过渡完成，避免把瞬时中间态当成失败。"""
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        last_state = "unreadable"
+        known_child_since: float | None = None
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return last_state
+            last_state = self._observe_page_state(profile, timeout=remaining)
+            now = time.monotonic()
+            if last_state in {"home", "loading"}:
+                return last_state
+            if last_state == "known_child":
+                if known_child_since is None:
+                    known_child_since = now
+                elif now - known_child_since >= 0.4:
+                    return last_state
+            else:
+                known_child_since = None
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return last_state
+            time.sleep(min(0.2, remaining))
+
+    def _wait_out_initializing(self, timeout: float) -> bool:
+        self._root = None
+        return self.wait_for(self.is_loaded, timeout=timeout)
+
     @allure_step("打开酷我首页")
     def launch(self, profile: MediaProfile) -> None:
-        self.adb.start_activity(profile)
-        if self.wait_for(self.is_loaded, timeout=3):
+        # 先读取一次真实页面：首页直接复用；已知子页面按层级返回；桌面/外部页才重发 intent。
+        # XML 读失败或未知媒体页都不会触发 Back，避免再次把首页误退到车机桌面。
+        wait_budget = max(10.0, float(self.ui_timeout))
+        observe_budget = min(5.0, wait_budget)
+        navigation_budget = min(3.0, wait_budget)
+        state = self._observe_page_state(profile, timeout=observe_budget)
+        if state == "home":
             return
-        # 同一个 Activity 内的搜索/设置/播放子页面可能不会被 launch intent 重置，逐级返回到首页。
-        for _ in range(3):
-            self.adb.press_back()
-            if self.wait_for(self.is_loaded, timeout=3):
+
+        if state == "loading":
+            if self._wait_out_initializing(wait_budget):
                 return
-        assert self.wait_for(self.is_loaded), "酷我首页未在超时时间内加载完成"
+            package, activity = self.adb.foreground_package_activity()
+            focus = f"{package}/{activity}" if package else (activity or "unknown")
+            raise AssertionError(f"酷我初始化页持续未完成；focus={focus}")
+
+        package, _ = self.adb.foreground_package_activity()
+        if package != profile.package or state in {"other_app", "unreadable", "unknown_media"}:
+            self.adb.start_activity(profile)
+            state = self._wait_for_navigation_state(profile, timeout=navigation_budget)
+            if state == "home":
+                return
+
+        # 同一个 KuwoMainActivity 内的设置/关于/搜索/详情 Fragment 不会被 launch intent 重置。
+        # 每次 Back 前都要求上一轮 XML 明确识别为已知子页面；最多四层，避免无限导航。
+        for _ in range(4):
+            if state != "known_child":
+                break
+            self.adb.press_back()
+            state = self._wait_for_navigation_state(profile, timeout=navigation_budget)
+            if state == "home":
+                return
+            if state == "loading":
+                if self._wait_out_initializing(wait_budget):
+                    return
+                break
+
+        package, activity = self.adb.foreground_package_activity()
+        focus = f"{package}/{activity}" if package else (activity or "unknown")
+        raise AssertionError(f"酷我首页恢复失败；state={state}；focus={focus}")
 
     def is_loaded(self) -> bool:
-        return self.exists_resource_id(KuwoHomeLocators.HOME_RECYCLER) and self.exists_desc(
-            KuwoHomeLocators.SEARCH_DESC
-        ) and self.exists_text("热门")
+        # 详情页也可能复用 recyclerView；TabLayout + 任一选中 Tab 才能证明当前是首页。
+        # 搜索/设置优先用稳定标题栏容器 resource-id，文案仅作为中英双语兜底。
+        search_ready = self.exists_resource_id(KuwoHomeLocators.TITLE_ACTIONS) or self._has_any_desc(
+            KuwoHomeLocators.SEARCH_DESC_ALIASES
+        )
+        settings_ready = self.exists_resource_id(KuwoHomeLocators.SETTINGS_ACTIONS) or self._has_any_desc(
+            KuwoHomeLocators.SETTINGS_DESC_ALIASES
+        )
+        return (
+            self.exists_resource_id(KuwoHomeLocators.HOME_RECYCLER)
+            and self.exists_resource_id(KuwoHomeLocators.TAB_LAYOUT)
+            and self._selected_home_tab() is not None
+            and search_ready
+            and settings_ready
+        )
 
     @allure_step("断言酷我首页已加载")
     def assert_loaded(self) -> None:
         self.refresh("kuwo_home.xml")
         assert self.exists_resource_id(KuwoHomeLocators.HOME_RECYCLER), "首页列表未展示"
-        assert self.exists_desc(KuwoHomeLocators.SEARCH_DESC), "首页搜索入口未展示"
-        assert self.exists_desc(KuwoHomeLocators.SETTINGS_DESC), "首页设置入口未展示"
-        missing_tabs = [tab for tab in KuwoHomeLocators.TABS if not self.exists_text(tab)]
+        assert self.exists_resource_id(KuwoHomeLocators.TAB_LAYOUT), "首页 Tab 容器未展示"
+        assert self._selected_home_tab() is not None, "首页没有处于选中态的 Tab"
+        assert self.exists_resource_id(KuwoHomeLocators.TITLE_ACTIONS) or self._has_any_desc(
+            KuwoHomeLocators.SEARCH_DESC_ALIASES
+        ), "首页搜索入口未展示"
+        assert self.exists_resource_id(KuwoHomeLocators.SETTINGS_ACTIONS) or self._has_any_desc(
+            KuwoHomeLocators.SETTINGS_DESC_ALIASES
+        ), "首页设置入口未展示"
+        missing_tabs = [tab for tab in KuwoHomeLocators.TABS if self._tab_node(tab) is None]
         assert not missing_tabs, f"首页 Tab 缺失: {missing_tabs}"
 
     @allure_step("断言首页 MiniPlayer 控件完整展示")
@@ -89,15 +251,14 @@ class KuwoHomePage(BasePage):
     @allure_step("切换首页 Tab：{tab_name}")
     def switch_tab(self, tab_name: str) -> None:
         self.refresh(f"before_switch_tab_{tab_name}.xml")
-        assert tab_name in KuwoHomeLocators.TABS, f"未登记的酷我首页 Tab: {tab_name}"
-        if self.exists_desc(f"content={tab_name}"):
-            self.tap_desc(f"content={tab_name}")
-        else:
-            self.tap_text(tab_name)
-        assert self.wait_for(lambda: self.is_tab_selected(tab_name)), f"切换到 Tab 后页面未稳定: {tab_name}"
+        canonical, _ = self._tab_identity(tab_name)
+        tab_node = self._tab_node(canonical)
+        assert tab_node is not None, f"Tab 节点未展示: {canonical}"
+        self.tap_node_center(tab_node, f"home tab={canonical}")
+        assert self.wait_for(lambda: self.is_tab_selected(canonical)), f"切换到 Tab 后页面未稳定: {canonical}"
 
     def is_tab_selected(self, tab_name: str) -> bool:
-        tab_node = self.find_by_desc(f"content={tab_name}", exact=True)
+        tab_node = self._tab_node(tab_name)
         return (
             tab_node is not None
             and tab_node.attrib.get("selected") == "true"
@@ -107,24 +268,26 @@ class KuwoHomePage(BasePage):
     @allure_step("断言首页 Tab 内容可读：{tab_name}")
     def assert_tab_content_readable(self, tab_name: str) -> None:
         self.refresh(f"tab_{tab_name}.xml")
-        assert self.exists_text(tab_name), f"Tab 文案未展示: {tab_name}"
+        canonical, _ = self._tab_identity(tab_name)
+        assert self._tab_node(canonical) is not None, f"Tab 节点未展示: {canonical}"
         assert self.exists_resource_id(KuwoHomeLocators.HOME_RECYCLER), f"Tab 内容列表未展示: {tab_name}"
 
     @allure_step("断言首页 Tab 已选中且内容非空：{tab_name}")
     def assert_tab_selected_and_non_empty(self, tab_name: str) -> None:
         self.refresh(f"strong_tab_{tab_name}.xml")
-        tab_node = self.find_by_desc(f"content={tab_name}", exact=True)
-        assert tab_node is not None, f"Tab 节点未展示: {tab_name}"
-        assert tab_node.attrib.get("selected") == "true", f"Tab 未处于选中状态: {tab_name}"
-        assert self.exists_resource_id(KuwoHomeLocators.HOME_RECYCLER), f"Tab 内容列表未展示: {tab_name}"
-        if tab_name == "我的":
+        canonical, _ = self._tab_identity(tab_name)
+        tab_node = self._tab_node(canonical)
+        assert tab_node is not None, f"Tab 节点未展示: {canonical}"
+        assert tab_node.attrib.get("selected") == "true", f"Tab 未处于选中状态: {canonical}"
+        assert self.exists_resource_id(KuwoHomeLocators.HOME_RECYCLER), f"Tab 内容列表未展示: {canonical}"
+        if canonical == "我的":
             # 我的页至少要展示三大稳定入口；账号态可能登录/未登录，但入口区必须可用。
             for entry_name in ("最近收听", "下载", "收藏"):
                 assert self.exists_desc(entry_name), f"我的页入口未展示: {entry_name}"
             return
         assert (
             self.visible_card_title_count() > 0 or self.visible_content_text_count() > 0
-        ), f"Tab 未展示可识别业务内容: {tab_name}"
+        ), f"Tab 未展示可识别业务内容: {canonical}"
 
     def visible_card_title_count(self) -> int:
         return sum(
@@ -134,7 +297,11 @@ class KuwoHomePage(BasePage):
         )
 
     def visible_content_text_count(self) -> int:
-        ignored = set(KuwoHomeLocators.TABS) | {"搜索", "设置"}
+        ignored = {
+            alias
+            for aliases in KuwoHomeLocators.TAB_ALIASES.values()
+            for alias in aliases
+        } | set(KuwoHomeLocators.SEARCH_DESC_ALIASES) | set(KuwoHomeLocators.SETTINGS_DESC_ALIASES)
         count = 0
         for node in self.nodes():
             text = (node.attrib.get("text") or "").strip()
@@ -302,12 +469,12 @@ class KuwoHomePage(BasePage):
     @allure_step("从酷我首页进入搜索页")
     def open_search(self) -> None:
         self.refresh("before_open_search.xml")
-        self.tap_desc(KuwoHomeLocators.SEARCH_DESC)
+        self._tap_desc_alias(KuwoHomeLocators.SEARCH_DESC_ALIASES, "search")
 
     @allure_step("从酷我首页进入设置页")
     def open_settings(self) -> None:
         self.refresh("before_open_settings.xml")
-        self.tap_desc(KuwoHomeLocators.SETTINGS_DESC)
+        self._tap_desc_alias(KuwoHomeLocators.SETTINGS_DESC_ALIASES, "settings")
 
     @allure_step("从 MiniPlayer 打开播放页")
     def open_player_from_miniplayer(self) -> None:

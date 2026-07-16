@@ -552,3 +552,71 @@ Compress-Archive -Path .\output\allure_report\* -DestinationPath .\output\allure
 - `test_device_online`、`test_launch_kuwo_home` 在 `192.168.2.89:5555` 上定向验证：2 passed in 15.74s；结果 JSON 已确认中文标题、中文描述、首页步骤和 Behaviors 层级生效，tag 无重复。
 - 本轮整理后未重新执行 40 条设备全量回归，最新全量结果仍以上述 2026-07-10 数据为准。
 
+### 2026-07-13 平台执行兼容与并发隔离修复
+
+针对同一 v2.0 脚本在独立工程可运行、上传平台后首页失败和任务互相干扰的问题，
+本轮完成框架侧的语言兼容与运行隔离修复：
+
+- `KuwoHomePage.is_loaded()` 不再写死中文“热门”，改用稳定的
+  `tabLayout`、`recyclerView`、标题栏容器 resource-id 和 Tab `selected=true`。
+- 六个首页 Tab 建立中英 `content-desc` 别名：`我的/My`、`热门/Popular`、
+  `榜单/TOP`、`会员专区/Car VIP`、`听吧/Podcast`、`曲库/Library`；
+  现有测试仍使用中文业务名，但在英文系统上会自动解析到对应节点。
+- 新增 `MEDIA_REMOTE_ARTIFACT_PREFIX`。设备端 XML/截图从固定
+  `/sdcard/media_auto_window.xml`、`media_auto_screen.png` 改为 job/进程独立文件；
+  平台并发执行时必须传入唯一 job 前缀。
+- `ADBHelper.dump_ui_xml()` 的 `timeout` 改为删除、dump、pull 和重试共享的总墙钟预算；
+  `BasePage.wait_for()` 把剩余预算传给每次 UI dump，并移除超时后的额外无预算刷新。
+- 新增 `unit_tests/test_runtime_stability.py`，覆盖中英文首页识别、详情页排除、
+  中文业务 Tab 到英文节点映射、wait/dump 总预算和远端路径隔离。
+
+离线验证（未连接、未操作台架）：
+
+- `python -m pytest -q unit_tests -o addopts=`：6 passed。
+- `python -m pytest --collect-only -q tests\kuwo -o addopts=`：40 tests collected。
+- `python -m compileall -q config drivers helpers pagelocators pageobjects tests unit_tests`：通过。
+
+说明：这些修复解决的是 Media 框架自身的中文首页误判、远端临时文件冲突和等待超时放大。
+平台仍需为每个任务设置独立的 `MEDIA_OUTPUT_DIR`、`MEDIA_REMOTE_ARTIFACT_PREFIX`，
+并在设备层实施互斥排队，才能完成端到端并发隔离。
+
+### 2026-07-14 页面感知恢复与平台待同步
+
+隔离后的平台全量报告证明第一个驾驶模式节点退出时可能停留在“关于”Fragment；后续每个节点
+都调用首页前置，旧 v2 只重发同一个 Activity intent，无法清掉 Fragment，最终 33 个映射节点
+同源失败。本轮按真实页面证据补齐恢复，不再使用无条件 Back：
+
+- `KuwoHomePage.launch()` 先读取 XML，状态拆分为 `home/loading/known_child/unknown_media/other_app/unreadable`。
+- 已知设置、关于、搜索、播放和详情子页面，且 XML 中存在返回控件或已登记稳定 resource-id 时，
+  最多按四层 Back 恢复首页；每次 Back 后重新读树确认。
+- 车机桌面、外部 App、未知媒体页和 XML 不可读状态不会盲按 Back；需要时显式启动酷我，仍无法
+  恢复则抛出包含 `state/focus` 的“酷我首页恢复失败”。
+- 初始化进度页单独等待；持续未完成抛出“酷我初始化页持续未完成”，让平台公共基线熔断识别。
+- 新增“关于 → 设置 → 首页”“桌面 → 显式启动 → 首页”“未知页不盲退”“初始化页不盲退”单测。
+
+离线验证结果：
+
+- `python -m pytest -q unit_tests -o addopts=`：10 passed。
+- `python -m pytest --collect-only -q tests\kuwo -o addopts=`：40 tests collected。
+- 当前源码按平台 mapping 规则可映射 33 个 pytest 节点和 83 条功能用例；
+  截至本次提交，包含页面恢复改动的新制品尚未覆盖平台当前激活的 v2.0，平台仍为旧包。
+- 正式上传时需从本次 Git 提交生成干净 ZIP，并由平台侧验收文档记录 SHA-256
+  （制品不能在自身内容中稳定引用自身哈希）。
+- 2026-07-14 14:44 两台台架 `.32/.89` 的 ADB 5555 均超时，故“关于 → 首页”真机定向验证
+  尚未执行；不能把离线单测写成真机验收通过。
+
+### 2026-07-16 提交前审阅修复
+
+- 修正启动 Activity 或按 Back 后只观察一次页面的问题：现在会在 3 秒墙钟预算内重复读取页面状态，
+  允许短暂的 `unknown_media/unreadable/other_app` 过渡态恢复为首页。
+- 连续识别到已知子页面后才允许下一次 Back，仍保持“未知页面不盲退”的安全约束。
+- 新增启动后、Back 后“瞬时未知页 → 首页”的延迟过渡单测。
+- 更正文档中的平台同步状态：当前源码已满足 33 个节点映射 83 条功能用例的契约，
+  但包含本轮修复的新 ZIP 仍需在提交后重新生成并上传。
+
+离线验证（未连接、未操作台架）：
+
+- `python -m pytest -q unit_tests -o addopts= -p no:cacheprovider`：12 passed。
+- `python -m pytest --collect-only -q tests\kuwo -o addopts= -p no:cacheprovider`：40 tests collected。
+- `python -m compileall -q config drivers helpers pagelocators pageobjects tests unit_tests`：通过。
+

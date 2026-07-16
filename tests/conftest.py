@@ -33,7 +33,12 @@ def profile(settings: Settings) -> MediaProfile:
 
 @pytest.fixture(scope="session")
 def adb(settings: Settings) -> ADBHelper:
-    return ADBHelper(settings.device_serial, timeout=settings.adb_timeout, display_id=settings.display_id)
+    return ADBHelper(
+        settings.device_serial,
+        timeout=settings.adb_timeout,
+        display_id=settings.display_id,
+        remote_artifact_prefix=settings.remote_artifact_prefix,
+    )
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -50,6 +55,7 @@ def allure_environment(settings: Settings, adb: ADBHelper, profile: MediaProfile
                 f"media.version={adb.package_version(profile.package)}",
                 f"ui.timeout={settings.ui_timeout}",
                 f"adb.timeout={settings.adb_timeout}",
+                f"remote.artifact.prefix={settings.remote_artifact_prefix}",
             ]
         )
         + "\n",

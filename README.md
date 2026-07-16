@@ -55,15 +55,37 @@ Copy-Item .\.env.example .\.env
 ```text
 MEDIA_DEVICE_SERIAL=192.168.2.197:5555
 MEDIA_PROFILE=oneinfo_kuwo
+MEDIA_OUTPUT_DIR=output
+# 平台/并发运行必须给每个 job 设置唯一值；本地未设置时自动使用 media_auto_<pid>
+MEDIA_REMOTE_ARTIFACT_PREFIX=job_2089
+MEDIA_ADB_TIMEOUT=30
+MEDIA_UI_TIMEOUT=10
 ```
+
+`MEDIA_OUTPUT_DIR` 隔离本地截图、XML 和 Allure 结果；`MEDIA_REMOTE_ARTIFACT_PREFIX`
+隔离设备端临时 XML/截图。平台并发运行时两者都应使用 job 级唯一值。
 
 ```powershell
 python -m pytest --collect-only -q
+python -m pytest -q .\unit_tests -o addopts=
 python .\main.py .\tests\kuwo\test_kuwo_smoke.py -q -rs
 python .\main.py -m "smoke and kuwo" -q -rs
 python .\main.py .\tests\kuwo -q -rs
 allure generate .\output\allure_results -o .\output\allure_report --clean
 ```
+
+首页兼容策略：
+
+- 首页就绪以稳定的 `tabLayout`、`recyclerView`、标题栏容器和任一 Tab 的
+  `selected=true` 为准，不再依赖中文“热门”。
+- 六个首页 Tab 通过 `content-desc` 做中英双语映射，例如
+  `热门/Popular`、`榜单/TOP`、`会员专区/Car VIP`。
+- `BasePage.wait_for()` 与 `uiautomator dump` 共用同一墙钟预算；
+  `wait_for(timeout=3)` 不会再被三轮 ADB 重试放大成数分钟。
+- `KuwoHomePage.launch()` 先读页面状态：已经在首页直接复用；设置、关于、搜索、详情等
+  已知子页面才按层级安全返回；桌面或外部 App 才显式启动酷我。
+- XML 读取失败和未知媒体页禁止盲按 Back；初始化页持续不结束会给出独立错误，供平台将
+  后续节点熔断为 `BLOCKED`，避免一次公共基线故障制造整批全红。
 
 VSCode 运行说明：
 

@@ -25,6 +25,7 @@ class Settings:
     adb_timeout: int
     ui_timeout: int
     display_id: str | None
+    remote_artifact_prefix: str
 
     @property
     def allure_results_dir(self) -> Path:
@@ -44,4 +45,7 @@ def load_settings() -> Settings:
         adb_timeout=_env_int("MEDIA_ADB_TIMEOUT", 30),
         ui_timeout=_env_int("MEDIA_UI_TIMEOUT", 10),
         display_id=display_id,
+        # 平台会传入 job 级前缀；本地直接运行时至少按 pytest 进程隔离，
+        # 避免多个任务共用 /sdcard/media_auto_window.xml 和截图文件。
+        remote_artifact_prefix=os.getenv("MEDIA_REMOTE_ARTIFACT_PREFIX") or f"media_auto_{os.getpid()}",
     )

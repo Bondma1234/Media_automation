@@ -41,11 +41,12 @@ class BasePage:
         self._last_xml_path = artifact_dir / "current_window.xml"
         self._root: ET.Element | None = None
 
-    def refresh(self, name: str = "current_window.xml") -> ET.Element:
+    def refresh(self, name: str = "current_window.xml", timeout: float | None = None) -> ET.Element:
         remaining_path_budget = _MAX_COMPATIBLE_ARTIFACT_PATH_LENGTH - len(str(self.artifact_dir.resolve())) - 1
         filename_limit = max(32, min(_MAX_ARTIFACT_FILENAME_LENGTH, remaining_path_budget))
         self._last_xml_path = self.artifact_dir / _safe_artifact_filename(name, filename_limit)
-        self.adb.dump_ui_xml(self._last_xml_path)
+        dump_budget = float(self.ui_timeout if timeout is None else timeout)
+        self.adb.dump_ui_xml(self._last_xml_path, timeout=dump_budget)
         self._root = ET.parse(self._last_xml_path).getroot()
         return self._root
 
@@ -55,22 +56,27 @@ class BasePage:
             return self.refresh()
         return self._root
 
-    def wait_for(self, condition: Callable[[], bool], timeout: int | None = None) -> bool:
-        end_time = time.time() + (timeout or self.ui_timeout)
-        while time.time() < end_time:
+    def wait_for(self, condition: Callable[[], bool], timeout: float | None = None) -> bool:
+        budget = float(self.ui_timeout if timeout is None else timeout)
+        if budget <= 0:
+            return False
+        end_time = time.monotonic() + budget
+        while True:
+            remaining = end_time - time.monotonic()
+            if remaining <= 0:
+                return False
             try:
-                self.refresh()
+                # refresh 与 ADB dump 共享当前剩余预算；不允许一次读树超过整个 wait_for。
+                self.refresh(timeout=remaining)
                 if condition():
                     return True
             except Exception:
                 # 播放页等动态界面可能让 uiautomator 暂时拿不到 idle，等待循环继续重试。
                 pass
-            time.sleep(0.5)
-        try:
-            self.refresh()
-            return condition()
-        except Exception:
-            return False
+            remaining = end_time - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(0.5, remaining))
 
     def nodes(self) -> list[ET.Element]:
         return list(self.root.iter("node"))

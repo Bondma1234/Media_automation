@@ -4,7 +4,16 @@
 class KuwoHomeLocators:
     SEARCH_DESC = "搜索"
     SETTINGS_DESC = "设置"
+    SEARCH_DESC_ALIASES = ("搜索", "Search")
+    SETTINGS_DESC_ALIASES = ("设置", "Settings")
     MODULE_SWITCH_OPTIONS = ("电台", "酷我音乐", "喜马拉雅", "乐听")
+    TAB_LAYOUT = "com.jidouauto.media:id/tabLayout"
+    TITLE_ACTIONS = "com.jidouauto.media:id/actionButtons"
+    SETTINGS_ACTIONS = "com.jidouauto.media:id/menuActionContainer"
+    INIT_PROGRESS = "com.jidouauto.media:id/initScreenProgressBar"
+    # OneInfo 在中英文系统中的返回按钮 content-desc 会带业务前缀（例如 ###Back）。
+    # 页面恢复只在 XML 已成功读取且确认存在返回控件时才允许发送 Back。
+    BACK_DESC_ALIASES = ("Back", "返回")
     HOME_RECYCLER = "com.jidouauto.media:id/recyclerView"
     MINI_PREV = "com.jidouauto.media:id/id_op_prev"
     MINI_PLAY_PAUSE = "com.jidouauto.media:id/id_op_playpause"
@@ -13,7 +22,17 @@ class KuwoHomeLocators:
     MINI_TITLE = "com.jidouauto.media:id/tv_title"
     MINI_SUBTITLE = "com.jidouauto.media:id/tv_subTitle"
     MINI_TIME = "com.jidouauto.media:id/tv_time"
-    TABS = ("我的", "热门", "榜单", "会员专区", "听吧", "曲库")
+    # Key 保持现有中文业务名，value 对应同一台架在 zh/en locale 下的实际 content-desc。
+    # 页面识别和切换优先使用 content-desc + selected，不依赖当前显示语言的 text。
+    TAB_ALIASES = {
+        "我的": ("我的", "My"),
+        "热门": ("热门", "Popular"),
+        "榜单": ("榜单", "TOP"),
+        "会员专区": ("会员专区", "Car VIP"),
+        "听吧": ("听吧", "Podcast"),
+        "曲库": ("曲库", "Library"),
+    }
+    TABS = tuple(TAB_ALIASES)
     CARD_TITLE = "com.jidouauto.media:id/title"
     DETAIL_TITLE = "com.jidouauto.media:id/titleTextViewRef"
     SONG_NAME = "com.jidouauto.media:id/audio_name"
